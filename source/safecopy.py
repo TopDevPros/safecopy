@@ -8,7 +8,7 @@
     See docs at https://denova.com/open_source/safecopy/
 
     Copyright 2018-2020 DeNova
-    Last modified: 2020-10-29
+    Last modified: 2020-11-26
 '''
 
 import argparse
@@ -773,19 +773,15 @@ class FileCopier():
 
                 to_file.truncate(equal_bytes)
 
+                buffer_size = BUFFER_1M
+
                 try:
-                    copy_remaining_bytes(from_file, to_file)
+                    copy_remaining_bytes(from_file, to_file, buffer_size=buffer_size)
+                    
                 except MemoryError:
-                    buffer_size = BUFFER_1M
-
-                    log(f'memory error; trying to copy using a {buffer_size} buffer')
-                    try:
-                        copy_remaining_bytes(from_file, to_file, buffer_size=buffer_size)
-                    except MemoryError:
-                        buffer_size = BUFFER_1K
-
-                        log(f'memory error; trying to copy using a {buffer_size} buffer')
-                        copy_remaining_bytes(from_file, to_file, buffer_size=buffer_size)
+                    log(f'memory error while trying to copy with {buffer_size} buffer')
+                    buffer_size = BUFFER_1K
+                    copy_remaining_bytes(from_file, to_file, buffer_size=buffer_size)
 
         log('copied bytes')
 
