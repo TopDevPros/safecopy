@@ -3,7 +3,8 @@ DeNova Safecopy
 ---------------
 
 Safecopy syncronizes drives and directories very carefully.
-Rsync replacement that fixes rsync's fatal default metadata check.
+Like rsync, without rsync's insecure default metadata check.
+Securely copies to and from remote filesystems through sshfs.
 
 
 Full Description
@@ -11,4 +12,4 @@ Full Description
 
 Learn more about the denova python package at:
 
-    https://denova.com/open_source/safecopy/
+    https://denova.com/open/safecopy/
