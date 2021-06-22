@@ -2,19 +2,20 @@
 '''
     Simple secure file copy.
 
-    Advantageous to "pip3 install denova pyrsync2",
-    but not required.
+    Recommended:
+        pip3 install denova pyrsync2
 
     See docs at https://denova.com/open/safecopy/
 
     Copyright 2018-2021 DeNova
-    Last modified: 2020-01-02
+    Last modified: 2021-06-21
 '''
 
 import argparse
 import doctest
 import filecmp
 import os
+import platform
 import stat
 import sys
 from contextlib import contextmanager
@@ -30,7 +31,7 @@ except ImportError:
     pass
 
 
-CURRENT_VERSION = '1.2.5'
+CURRENT_VERSION = '1.2.6'
 COPYRIGHT = 'Copyright 2018-2021 DeNova'
 LICENSE = 'GPLv3'
 
@@ -41,11 +42,12 @@ BUFFER_1M = BUFFER_1K * BUFFER_1K
 # global variables
 args = None
 changed_dirs = set()
+system = platform.system()
 
 try:
-    from denova.python.log import get_log
+    from denova.python.log import Log, get_log_path
 
-    log = get_log()
+    log = Log()
 except ImportError:
     log = None
 
@@ -58,7 +60,7 @@ def main():
         >>> PYTHON = 'python3'
         >>> TEST_LENGTH = 5
 
-        >>> def safecopy(*args):
+        >>> def test_safecopy(*args):
         ...     CURRENT_DIR = os.path.realpath(os.path.abspath(os.path.dirname(__file__)))
         ...     safecopy_cmd = os.path.join(CURRENT_DIR, 'safecopy')
         ...     command = [safecopy_cmd, '--verbose'] + list(args)
@@ -73,7 +75,7 @@ def main():
         ...     assert from_data == to_data, f'from_data={from_data}, to_data={to_data}'
 
         >>> def safecopy_check(from_path, to_path):
-        ...     safecopy(from_path, to_path)
+        ...     test_safecopy(from_path, to_path)
         ...     assert os.path.getsize(from_path) == os.path.getsize(to_path)
         ...     assert os.path.getsize(from_path) == os.path.getsize(to_path)
         ...     diff(from_path, to_path)
@@ -124,8 +126,8 @@ def show_version():
 
         >>> show_version()
         <BLANKLINE>
-        Safecopy 1.2.4
-        Copyright 2018-2020 DeNova
+        Safecopy 1.2.6
+        Copyright 2018-2021 DeNova
         License: GPLv3
         <BLANKLINE>
         <BLANKLINE>
@@ -160,6 +162,8 @@ def start_safecopy():
 
             from_path = os.path.abspath(path)
             log_message(f'from_path={from_path}')
+            # from_root is the part of from_path that is definitely a dir
+            # the basename may be a dir or file
             from_root = os.path.dirname(from_path)
             log_message(f'from_root={from_root}')
 
@@ -174,13 +178,63 @@ def start_safecopy():
     except KeyboardInterrupt:
         log.exception_only()
 
-    except:
+    except Exception as exc:
         log.exception()
-        error_exit(log.exception_only())
+        error_exit(exc)
 
 def copy(from_path, to_path, from_root, to_root, exclude_paths):
-    ''' Copy files from from_path to to_path. Copy directories recursively. '''
+    ''' Copy files from from_path to to_path. Copy directories recursively.
 
+        >>> def check_dir(from_path, to_path, shared_path):
+        ...    dir_entries = os.scandir(from_path)
+        ...    for dir_entry in dir_entries:
+        ...        to_path = os.path.join(to_path, dir_entry.name)
+        ...        if dir_entry.is_dir():
+        ...            check_dir(dir_entry.path, to_path, shared_path)
+        ...        else:
+        ...             verify_copy(dir_entry.path, to_path, shared_path)
+
+        >>> from tempfile import gettempdir
+
+        >>> temp_dir = gettempdir()
+        >>> test_from = os.path.join(temp_dir, 'test-safecopy-from')
+        >>> if os.path.exists(test_from):
+        ...     rmtree(test_from)
+        >>> test_to = os.path.join(temp_dir, 'test-safecopy-to')
+        >>> to_root = os.path.dirname(test_to)
+        >>> if os.path.exists(test_to):
+        ...     rmtree(test_to)
+
+        # create a multi-level directory so we can verify metadata matches at all levels
+        >>> from_test_subdir = os.path.join(test_from, 'subdir1', 'subdir2')
+        >>> from_test_path = os.path.join(from_test_subdir, 'test-file.txt')
+        >>> from_root = os.path.dirname(test_from)
+        >>> os.makedirs(from_test_subdir)
+        >>> with open(from_test_path, 'wt') as outfile:
+        ...     __ = outfile.write('this is a test')
+
+        >>> exclude_paths = []
+        >>> copy(test_from, test_to, from_root, to_root, exclude_paths)
+
+        >>> os.path.isdir(test_to)
+        True
+
+        >>> shared_path = test_from[len(from_root):].lstrip(os.sep)
+        >>> verify_copy(test_from, test_to, shared_path)
+        >>> check_dir(test_from, test_to, shared_path)
+
+        >>> to_test_path = os.path.join(test_to, 'subdir1', 'subdir2', 'test-file.txt')
+        >>> os.path.isfile(to_test_path)
+        True
+
+        >>> with open(to_test_path) as infile:
+        ...     print(infile.read())
+        this is a test
+    '''
+
+    # shared_path is the shared part of the path
+    # that currently exists in from_path,
+    # and will exist in to_path, excluding the from_root
     shared_path = from_path[len(from_root):].lstrip(os.sep)
 
     if exclude_path(from_path, from_root, exclude_paths):
@@ -192,7 +246,9 @@ def copy(from_path, to_path, from_root, to_root, exclude_paths):
             log_message(f'already equal: {shared_path}')
 
         else:
-            file_pair.copy_path(from_root, to_root)
+            # the dir entries to copy are in self.from_path and self.to_path
+            # from_root and to_root are just so we can make and update dirs
+            file_pair.make_dirs_and_copy(from_root, to_root)
 
         if os.path.isdir(from_path):
             log_message(f'dir: {shared_path}')
@@ -213,6 +269,14 @@ def copy(from_path, to_path, from_root, to_root, exclude_paths):
                     full_from = entry.path
                     full_to = os.path.join(to_path, entry.name)
                     copy(full_from, full_to, from_root, to_root, exclude_paths)
+
+            if not args.dryrun:
+                # we need a check for stats_equal,
+                # for the stats that copystat copies
+                log(f'copy dir metadata from: {from_path}')
+                log(f'                    to: {to_path}')
+                # from_path and to_path are the dirs we just copied
+                file_pair.copy_metadata(from_path, to_path)
 
 def copy_rsync_delta(from_path, to_path):
     ''' Copy using pyrsync2 implementation of rsync delta-copy algo.
@@ -255,7 +319,7 @@ def verify_copy(from_path, to_path, shared_path):
         verbose(f'verified: {shared_path}')
     else:
         # verify failure takes precendence over --persist
-        error_exit('unable to verify')
+        error_exit('Unable to verify')
 
 def parse_paths():
     '''
@@ -266,7 +330,7 @@ def parse_paths():
 
     if len(args.paths) <= 1:
         log_message(f'more than one path needed: safecopy SOURCE... DEST; args: {args}')
-        error_exit('more than one path needed: safecopy SOURCE... DEST')
+        error_exit('More than one path needed: safecopy SOURCE... DEST')
 
     # get from_paths
     from_paths = []
@@ -280,7 +344,7 @@ def parse_paths():
             # expand wildcards in from_paths
             glob_paths = glob(raw_path)
             if not glob_paths:
-                error_exit(f'path not found: {raw_path}')
+                error_exit(f'Unable to read: {raw_path}')
             for path in glob_paths:
                 from_paths.append(path.rstrip(os.sep))
     log_message(f'from {from_paths}')
@@ -291,16 +355,16 @@ def parse_paths():
 
     for path in from_paths:
         if not os.path.exists(path):
-            error_exit(f'source not found: {path}')
+            error_exit(f'Source not found: {path}')
 
     if not os.path.exists(to_path):
         to_path_parent = os.path.dirname(to_path)
         if not os.path.isdir(to_path_parent):
-            error_exit(f'destination directory not found {to_path_parent}')
+            error_exit(f'Destination directory not found {to_path_parent}')
 
     if len(from_paths) > 1:
         if not os.path.isdir(to_path):
-            error_exit(f'with more than one source path, destination must be a dir: {to_path}')
+            error_exit(f'With more than one source path, destination must be a dir: {to_path}')
 
     to_path = os.path.abspath(to_path)
     if os.path.isdir(to_path):
@@ -410,11 +474,86 @@ def warn(msg):
         sys.stdout.flush()
         log_message(msg)
 
-def error_exit(why):
-    ''' Exit on error. '''
+def error_exit(why=None):
+    '''
+        Exit on error.
 
-    log_message(why)
-    sys.exit(why)
+        >>> why = PermissionError("[Errno 1] Operation not permitted: 'file-owned-by-root'")
+        >>> try:
+        ...     error_exit(why)
+        ... except SystemExit as se:
+        ...    se.code == 1
+        <BLANKLINE>
+        <BLANKLINE>
+        Permission error on: 'file-owned-by-root'
+        <BLANKLINE>
+        <BLANKLINE>
+        <BLANKLINE>
+        True
+        >>> why = FileNotFoundError('No such file or directory: [test]')
+        >>> try:
+        ...     error_exit(why)
+        ... except SystemExit as se:
+        ...    se.code == 1
+        <BLANKLINE>
+        <BLANKLINE>
+        No such file or directory: [test]
+        <BLANKLINE>
+        <BLANKLINE>
+        <BLANKLINE>
+        True
+        >>> try:
+        ...     error_exit()
+        ... except SystemExit as se:
+        ...    se.code == 1
+        <BLANKLINE>
+        <BLANKLINE>
+        Error copying file(s)
+        <BLANKLINE>
+        <BLANKLINE>
+        <BLANKLINE>
+        True
+    '''
+    NOT_PERMITTED = '[Errno 1] Operation not permitted: '
+    ERROR_NUMBER2 = '[Errno 2] '
+    DETAILS = 'Error copying file(s)'
+
+    if args and args.test:
+        output = sys.stdout
+    else:
+        output = sys.stderr
+
+    if why:
+        if isinstance(why, FileNotFoundError):
+            why_string = str(why)
+            index = why_string.find(ERROR_NUMBER2)
+            if index >= 0:
+                why = why_string[index+len(ERROR_NUMBER2):]
+            full_details = why
+        elif isinstance(why, PermissionError):
+            why_string = str(why)
+            index = why_string.find(NOT_PERMITTED)
+            if index >= 0:
+                why = why_string[index+len(NOT_PERMITTED):]
+            full_details = f'Permission error on: {why}'
+        else:
+            full_details = f'{DETAILS}: {why}'
+    else:
+        full_details = DETAILS
+
+    log_message(full_details)
+    print(f'\n\n{full_details}', file=output)
+
+    try:
+        if args and args.verbose:
+            log_message(f'See details in {get_log_path()}\n\n')
+            print(f'See details in {get_log_path()}\n\n', file=sys.stderr)
+        else:
+            print(f'\n\n', file=output)
+    except NameError:
+        print(f'\n\n', file=output)
+
+    sys.exit(1)
 
 def parse_args():
     ''' Parsed command line. '''
@@ -441,7 +580,7 @@ def parse_args():
                         help='No warnings',
                         action='store_true')
     parser.add_argument('--test',
-                        help='Run tests',
+                        help='Run tests. You must use --test to run doctests.',
                         action='store_true')
     parser.add_argument('--exclude',
                         nargs='?',
@@ -480,7 +619,7 @@ class FileCopier():
         self.to_path = to_path
         self.shared_path = shared_path
 
-        self.count = None
+        self.count = 0
 
     def count_equal_bytes(self):
         ''' Count how many leading bytes are equal. '''
@@ -489,7 +628,7 @@ class FileCopier():
         # and to_path, we don't rely on read() to guess the buffer size
         buffer_size = BUFFER_1K
 
-        if self.count is None:
+        if self.count == 0:
 
             with LogElapsedTime('self.count_equal_bytes'):
                 if (os.path.isfile(self.from_path) and
@@ -520,9 +659,6 @@ class FileCopier():
                                    (from_bytes[index] == to_bytes[index])):
                                 self.count = self.count + 1
                                 index = index + 1
-
-        else:
-            self.count = 0
 
         log_message(f'{self.count} equal bytes')
 
@@ -643,46 +779,53 @@ class FileCopier():
 
         with LogElapsedTime('byte_for_byte_equal'):
             if os.path.isfile(self.from_path) and not os.path.islink(self.from_path):
-                equal_bytes = self.count_equal_bytes()
-                if (os.path.exists(self.to_path) and
-                    (equal_bytes == os.path.getsize(self.from_path)) and
-                    (equal_bytes == os.path.getsize(self.to_path))):
+                if os.path.exists(self.to_path):
+                    equal_bytes = self.count_equal_bytes()
+                    if ((equal_bytes == os.path.getsize(self.from_path)) and
+                        (equal_bytes == os.path.getsize(self.to_path))):
 
-                    log_message('files are byte-for-byte equal; metadata unknown')
-                    equal = True
-                # equal = filecmp.cmp(self.from_path, self.to_path, shallow=False)
+                        log_message('files are byte-for-byte equal; metadata unknown')
+                        equal = True
+                        # equal = filecmp.cmp(self.from_path, self.to_path, shallow=False)
+
+                    else:
+                        equal = False
+                        log_message(f'unequal because bytes not equal: from size {os.path.getsize(self.from_path)}')
+                        log_message(f'                                   to size {os.path.getsize(self.to_path)}')
 
                 else:
                     equal = False
+                    log_message(f'byte for byte not equal because {self.to_path} does not exist')
+
             else:
-                # no bytes to compare, so all bytes are equal
+                # no bytes to compare for links or dirs, so all bytes are equal
                 equal = True
-            if not equal:
-                log_message(f'unequal because bytes not equal: {self.shared_path}')
 
         return equal
 
     def metadata_equal(self):
         '''
             Just compare metadata, not byte-for-byte.
-
         '''
 
         # Cheap comparisons first. Shortcut compare when we can. If unequal, log why.
 
-        # double check our metadata compare
-        # filecmp.cmp(self.from_path, self.to_path, shallow=True)
-
         if os.path.exists(self.to_path):
+
+            # double check our metadata compare
+            # filecmp.cmp(self.from_path, self.to_path, shallow=True)
 
             equal = (self.both_exist() and
                      self.types_equal() and
                      self.sizes_equal() and
                      self.permissions_equal() and
                      self.modified_times_equal())
+            if not equal:
+                log_message(f'{self.from_path} not equal to {self.to_path}')
         else:
 
             equal = False
+            log_message(f'unequal because path does not exist: {self.to_path}')
 
         return equal
 
@@ -738,10 +881,10 @@ class FileCopier():
         if os.path.islink(self.from_path):
             target = os.readlink(self.from_path)
             delete(self.to_path)
-            log_message(f'link from {self.to_path} to {target}')
             os.symlink(target,
                        self.to_path,
                        target_is_directory=os.path.isdir(self.from_path))
+            verbose(f'Linked from {self.to_path} to {target}')
 
         elif os.path.isfile(self.from_path):
             # if we start copying from equal bytes, we don't remove the to_path
@@ -757,6 +900,7 @@ class FileCopier():
 
             else:
                 self.copy_bytes()
+                verbose(f'Copied {os.path.basename(self.from_path)} to {self.to_path}')
 
         elif os.path.isdir(self.from_path):
             # to_path must be a dir
@@ -766,9 +910,10 @@ class FileCopier():
             if not os.path.exists(self.to_path):
                 log_message(f'makedirs {self.to_path}')
                 os.makedirs(self.to_path)
+                verbose(f'Created: {self.to_path}')
 
         # set to_path attrs from from_path
-        self.copy_metadata()
+        self.copy_metadata(from_path=self.from_path, to_path=self.to_path)
 
     def copy_bytes(self):
         ''' Copy bytes from_path to to_path, skipping those that match. '''
@@ -785,7 +930,7 @@ class FileCopier():
                 else:
                     buf = from_file.read()
 
-        log_message(f'copy "{self.from_path}" to "{self.to_path}"')
+        log_message(f'copying "{self.from_path}" to "{self.to_path}"')
         # open both files as random access
         with open(self.from_path, 'rb+') as from_file:
             # open the to_path for appending so that part
@@ -803,7 +948,10 @@ class FileCopier():
                 to_file.truncate(equal_bytes)
 
                 buffer_size = BUFFER_1M
+                copy_remaining_bytes(from_file, to_file, buffer_size=buffer_size)
 
+                copy_remaining_bytes(from_file, to_file, buffer_size=buffer_size)
+                """ this can fail silently
                 try:
                     copy_remaining_bytes(from_file, to_file, buffer_size=buffer_size)
 
@@ -811,23 +959,34 @@ class FileCopier():
                     log_message(f'memory error while trying to copy with {buffer_size} buffer')
                     buffer_size = BUFFER_1K
                     copy_remaining_bytes(from_file, to_file, buffer_size=buffer_size)
+                """
 
         log_message('copied bytes')
 
-    def copy_path(self, from_root, to_root):
-        ''' Copy one directory entry. '''
+    def make_dirs_and_copy(self, from_root, to_root):
+        '''
+            Make parent dirs and copy one directory entry
+            from self.from_path to self.to_path.
+
+            The dir entries to copy are in self.from_path and
+            self.to_path. The params from_root and to_root are just
+            so we can make and update dirs.
+        '''
 
         def make_parent_dirs(path):
-            ''' Show parent dirs, outermost first.
+            ''' Create parent dirs, outermost first.
 
                 For rsync compatibility. '''
 
             if path and path != os.sep:
+                log(f'make_parent_dirs(): {path}')
 
-                # recurse to make highest level dir first
+                # recurse early to make highest level dir first
                 make_parent_dirs(os.path.dirname(path))
 
                 if path not in changed_dirs:
+                    log(f'making parent dir: {path}')
+
                     changed_dirs.add(path)
 
                     from_dir = os.path.join(from_root, path)
@@ -838,13 +997,12 @@ class FileCopier():
                         if not args.dryrun:
                             os.makedirs(to_dir)
 
-                    if not args.dryrun:
-                        if os.path.exists(from_dir):
-                            # we need a check for stats_equal,
-                            # for the stats that copystat copies
-                            self.copy_metadata(from_path=from_dir, to_path=to_dir)
+                else:
+                    log(f'parent dir already exists: {path}')
 
-        def _copy_path():
+        def copy_persistently():
+            ''' Copy and retry as needed. '''
+
             try:
                 ok = False
                 try:
@@ -882,17 +1040,11 @@ class FileCopier():
                 else:
                     raise
 
-        with LogElapsedTime('copy_path'):
-            make_parent_dirs(os.path.dirname(self.shared_path))
-
-            if os.path.isdir(self.from_path):
-                # like rsync
-                verbose(f'Copying: {self.shared_path + os.sep}')
-            else:
-                verbose(f'Copying: {self.shared_path}')
-
+        with LogElapsedTime('make_dirs_and_copy'):
+            path = os.path.dirname(self.shared_path)
+            make_parent_dirs(path)
             if not args.dryrun:
-                _copy_path()
+                copy_persistently()
 
     def copy_metadata(self, from_path=None, to_path=None):
         '''
@@ -904,7 +1056,8 @@ class FileCopier():
             >>> from tempfile import gettempdir
             >>> from_path = os.path.abspath(__file__)
             >>> to_path = os.path.join(gettempdir(), os.path.basename(from_path))
-            >>> shared_path = from_path[len(os.path.dirname(from_path)):].lstrip(os.sep)
+            >>> from_root = os.path.dirname(from_path)
+            >>> shared_path = from_path[len(from_root):].lstrip(os.sep)
             >>> if os.path.exists(to_path):
             ...     if os.path.isdir(to_path):
             ...         rmtree(to_path)
@@ -935,7 +1088,8 @@ class FileCopier():
             >>> from tempfile import gettempdir
             >>> from_path = os.path.abspath(os.path.dirname(__file__))
             >>> to_path = os.path.join(gettempdir(), os.path.basename(from_path))
-            >>> shared_path = from_path[len(os.path.dirname(from_path)):].lstrip(os.sep)
+            >>> from_root = os.path.dirname(from_path)
+            >>> shared_path = from_path[len(from_root):].lstrip(os.sep)
             >>> if os.path.exists(to_path):
             ...     if os.path.isdir(to_path):
             ...         rmtree(to_path)
@@ -947,70 +1101,77 @@ class FileCopier():
             >>> verify_metadata_in_dir(fc, from_path, to_path)
         '''
 
-        log_message('copy metadata')
+        if from_path != to_path:
 
-        if from_path is None:
-            from_path = self.from_path
-        if to_path is None:
-            to_path = self.to_path
+            log_message(f'copy metadata:\n    from_path={from_path}\n    to_path={to_path}')
 
-        # links don't have normal stat, and the permissions are for the target path
-        # or if the target does not exist, the permissions are 0o777 placeholders
-        if os.path.islink(to_path):
+            if from_path is None:
+                from_path = self.from_path
+            if to_path is None:
+                to_path = self.to_path
 
-            log_message('links do not have normal metadata')
-
-        else:
-
-            if os.path.isfile(from_path) and not self.sizes_equal(from_path=from_path, to_path=to_path):
-                msg = f'Cannot copy {from_path} metadata because file sizes are not equal'
-                error_exit(msg)
-
-            from_stat = os.lstat(from_path)
-
-            os.chown(to_path, from_stat.st_uid, from_stat.st_gid)
-
-            if from_stat.st_mode & UID_GID_MASK:
-                warn(f'setuid/setgid bit set on {from_path}')
-                # mask out uid/gid in source
-                # so we don't set uid/gid in dest
-                mode = from_stat.st_mode & ~UID_GID_MASK
-            else:
-                mode = from_stat.st_mode
-            os.chmod(to_path, mode)
-
-            """
-            # not portable, and
-            # this is inside "if not os.path.islink(to_path)"
-
-            # this gets "NotImplementedError: chmod: follow_symlinks unavailable on this platform"
-            os.chmod(to_path, mode, follow_symlinks=False)
-
-            # this gets "AttributeError: module 'os' has no attribute 'lchmod'"
+            # links don't have normal stat, and the permissions are for the target path
+            # or if the target does not exist, the permissions are 0o777 placeholders
             if os.path.islink(to_path):
-                os.lchmod(to_path, mode)
+
+                log_message('links do not have normal metadata')
+
             else:
+
+                if os.path.isfile(from_path):
+                    if not self.sizes_equal(from_path=from_path, to_path=to_path):
+                        msg = f'Cannot copy {from_path} metadata because file sizes are not equal'
+                        error_exit(msg)
+
+                from_stat = os.lstat(from_path)
+
+                # Windows does not support os.chown
+                if system != 'Windows':
+                    os.chown(to_path, from_stat.st_uid, from_stat.st_gid)
+
+                if from_stat.st_mode & UID_GID_MASK:
+                    warn(f'setuid/setgid bit set on {from_path}')
+                    # mask out uid/gid in source
+                    # so we don't set uid/gid in dest
+                    mode = from_stat.st_mode & ~UID_GID_MASK
+                else:
+                    mode = from_stat.st_mode
                 os.chmod(to_path, mode)
-            """
 
-            # filecmp cmp compares all the times (ctime, atime, and mtime)
-            # but python doesn't let us set ctime so the comparison can
-            # fail even though the important stats match
-            # don't use self.metadata_equal() because it
-            # checks self.from_path and self.to_path and sometimes we want
-            # to pass in values that aren't in the class
-            if not filecmp.cmp(from_path, to_path):
-                copystat(from_path, to_path, follow_symlinks=False)
+                """
+                # not portable, and
+                # this is inside "if not os.path.islink(to_path)"
 
-            # earlier metadata updates apparently change last
-            # modified/accessed times
-            # shutil.copystat() does not seem to reliably
-            # change mtime, so we do
-            atime = os.path.getatime(from_path)
-            mtime = os.path.getmtime(from_path)
-            os.utime(to_path, (atime, mtime))
+                # this gets "NotImplementedError: chmod: follow_symlinks unavailable on this platform"
+                os.chmod(to_path, mode, follow_symlinks=False)
 
-        log_message('copied metadata')
+                # this gets "AttributeError: module 'os' has no attribute 'lchmod'"
+                if os.path.islink(to_path):
+                    os.lchmod(to_path, mode)
+                else:
+                    os.chmod(to_path, mode)
+                """
+
+                # filecmp cmp compares all the times (ctime, atime, and mtime)
+                # but python doesn't let us set ctime so the comparison can
+                # fail even though the important stats match
+                # don't use self.metadata_equal() here, because it
+                # checks self.from_path and self.to_path and sometimes we want
+                # to pass in values that aren't in the class
+                if not filecmp.cmp(from_path, to_path):
+                    copystat(from_path, to_path, follow_symlinks=False)
+
+                # earlier metadata updates apparently change last
+                # modified/accessed times
+                # shutil.copystat() does not seem to reliably
+                # change mtime, so we do
+                atime = os.path.getatime(from_path)
+                mtime = os.path.getmtime(from_path)
+                os.utime(to_path, (atime, mtime))
+
+                os.utime(to_path, (atime, mtime))
+
+                log_message(f'copied metadata to {to_path}')
 
 def log_message(message):
     ''' Log a message if the denova package is available. '''
@@ -1051,4 +1212,3 @@ class LogElapsedTime():
 
 if __name__ == "__main__":
     main()
-    sys.exit(0)
