@@ -8,7 +8,7 @@
     See docs at https://denova.com/open/safecopy/
 
     Copyright 2018-2022 DeNova
-    Last modified: 2022-01-27
+    Last modified: 2022-11-21
 '''
 
 import argparse
@@ -36,7 +36,7 @@ from denova.os.fs import why_file_permission_denied
 
 DEBUG = True
 
-CURRENT_VERSION = '1.2.8'
+CURRENT_VERSION = '1.3.0'
 COPYRIGHT = 'Copyright 2018-2022 DeNova'
 LICENSE = 'GPLv3'
 
@@ -133,8 +133,8 @@ def show_version():
 
         >>> show_version()
         <BLANKLINE>
-        Safecopy 1.2.6
-        Copyright 2018-2021 DeNova
+        Safecopy 1.2.8
+        Copyright 2018-2022 DeNova
         License: GPLv3
         <BLANKLINE>
         <BLANKLINE>
@@ -512,7 +512,7 @@ def warn(msg):
     ''' Print and log warning message '''
 
     if args and not args.nowarn:
-        msg = 'Warning: ' + msg
+        msg = 'Warning: ' + str(msg)
         print(msg)
         sys.stdout.flush()
         log_message(msg)
@@ -702,10 +702,12 @@ class FileCopier():
 
                             delay()
 
-                        verbose_log('count last partial buffer')
-                        last_buffer_size = min(len(from_bytes),
-                                               len(to_bytes))
+                        last_buffer_size = min(len(from_bytes), len(to_bytes))
                         index = 0
+                        if ((index < last_buffer_size) and
+                               (from_bytes[index] == to_bytes[index])):
+                            verbose_log(f'including last partial buffer: {last_buffer_size}')
+
                         while ((index < last_buffer_size) and
                                (from_bytes[index] == to_bytes[index])):
                             self.count = self.count + 1

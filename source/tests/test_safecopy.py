@@ -3,7 +3,7 @@
     Tests safecopy.
 
     Copyright 2019-2021 DeNova
-    Last modified: 2021-06-21
+    Last modified: 2021-07-18
 '''
 
 import os
@@ -11,12 +11,9 @@ from subprocess import CalledProcessError
 from tempfile import gettempdir
 from unittest import TestCase
 
-try:
-    from denova.os.command import run
-    from denova.python.log import Log
-except ImportError:
-    sys.exit('You need the denova package from PyPI to run the tests')
-
+from denova.os.command import run
+from denova.python.format import to_bytes
+from denova.python.log import Log
 
 CURRENT_DIR = os.path.realpath(os.path.abspath(os.path.dirname(__file__)))
 SAFECOPY_APP = os.path.abspath(os.path.join(CURRENT_DIR, '..', 'safecopy'))
@@ -52,13 +49,17 @@ class TestSafecopy(TestCase):
     def test_no_permission(self):
         ''' Test that an error is reported when a file/directory doesn't have permission. '''
 
-        FROM_FILE = os.path.abspath(os.path.join(CURRENT_DIR, 'file-owned-by-root'))
-        command = [SAFECOPY_APP, '--verbose', FROM_FILE, TMP_DIR]
-        try:
-            run(*command)
-            self.fail('A permission error should have occurred')
-        except CalledProcessError as cpe:
-            pass
+        FROM_FILENAME = 'file-owned-by-root'
+        FROM_PATH = os.path.abspath(os.path.join(CURRENT_DIR, FROM_FILENAME))
+        TO_PATH = os.path.join(TMP_DIR, FROM_FILENAME)
+
+        command = [SAFECOPY_APP, '--verbose', FROM_PATH, TMP_DIR]
+        run(*command)
+        from_stat = os.lstat(FROM_PATH)
+        to_stat = os.lstat(TO_PATH)
+        self.assertNotEqual(from_stat.st_uid, to_stat.st_uid)
+        self.assertNotEqual(from_stat.st_gid, to_stat.st_gid)
+        os.remove(TO_PATH)
 
     def test_doctests(self):
         ''' Test safecopy doctests. '''
