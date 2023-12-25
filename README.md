@@ -14,7 +14,7 @@ Safecopy synchronizes drives and directories, and carefully verifies the copy. W
 Install
 -------
 
-pip3 install safecopy
+git clone https://codeberg.org/topdevpros/safecopy.git
 
 
 How it Works

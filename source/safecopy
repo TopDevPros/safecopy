@@ -5,8 +5,8 @@
     When you install "safecopy" from PyPI, all the dependencies, including the
     client side, are automatically installed.
 
-    Copyright 2018-2023 safeapps
-    Last modified: 2023-05-15
+    Copyright 2018-2023 TopDevPros
+    Last modified: 2023-10-01
 '''
 
 import argparse
@@ -34,8 +34,8 @@ from solidlibs.os.fs import why_file_permission_denied
 
 DEBUG = True
 
-CURRENT_VERSION = '1.3.2'
-COPYRIGHT = 'Copyright 2018-2023 solidlibs'
+CURRENT_VERSION = '1.3.3'
+COPYRIGHT = 'Copyright 2018-2023 TopDevPros'
 LICENSE = 'GPLv3'
 
 # do not change the format of the following line without updating blockchain-backup
@@ -132,7 +132,7 @@ def show_version():
         >>> show_version()
         <BLANKLINE>
         Safecopy 1.3.1
-        Copyright 2018-2023 solidlibs
+        Copyright 2018-2023 TopDevPros
         License: GPLv3
         <BLANKLINE>
         <BLANKLINE>
