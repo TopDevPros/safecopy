@@ -34,7 +34,7 @@ from solidlibs.os.fs import why_file_permission_denied
 
 DEBUG = True
 
-CURRENT_VERSION = '1.3.3'
+CURRENT_VERSION = '1.3.4'
 COPYRIGHT = 'Copyright 2018-2023 TopDevPros'
 LICENSE = 'GPLv3'
 
